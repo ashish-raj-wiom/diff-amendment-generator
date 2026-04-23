@@ -1,13 +1,24 @@
 ---
 name: diff-amendment-generator
-description: Generate a standalone diff-amendment file for a base spec (YAML / JSON / Markdown PRD, governance doc, API contract). Produces a surgical, reviewer-applyable patch — never modifies the base. Use when the user says "create an amendment", "generate a diff amendment", "write a patch amendment", "amend this spec", or references a base spec + a change request and needs an AMENDMENT-NN file. Bakes in one canonical format; enforces a codebase reality-check (including type discipline), a scenario-coverage pass, a cross-DIFF consistency sweep, and a three-sided governance check (OS + TAS + project conventions) so the amendment ships in one pass without tech-review churn.
+description: Produce a deployment-ready diff-amendment file for a base spec (YAML / JSON / Markdown PRD, governance doc, API contract). "Deployment-ready" = applyable surgically, matches live code, internally and cross-DIFF consistent, every external call / mutable field / state transition fully specified (failure, retry, concurrency, lifecycle), and governance-clean on OS invariants + consumer contracts + project conventions. Never modifies the base spec. Use when the user says "create an amendment", "generate a diff amendment", "write a patch amendment", "amend this spec", or references a base spec + a change request and needs an AMENDMENT-NN file. Bakes in one canonical format; enforces a codebase reality-check (including type discipline), a scenario-coverage pass, a cross-DIFF consistency sweep, and a three-sided governance check (OS + TAS + project conventions). Output ships in one pass — no follow-up questions from tech review.
 ---
 
 # diff-amendment-generator
 
 ## What this skill does
 
-Takes a base spec + a change request + the codebase + prior amendments, and produces a single standalone amendment file in a canonical format. Never modifies the base spec. Output is reviewable and surgically applyable by a backend team in one pass — the skill enforces enough checks (reality, scenario coverage, cross-DIFF consistency, governance) that tech review should find zero gaps to answer.
+Produces a **deployment-ready diff-amendment** for a base spec. Takes a base spec + a change request + the codebase + prior amendments, and outputs a single standalone amendment file in a canonical format. Never modifies the base spec.
+
+"Deployment-ready" means the file the tech team receives is applyable and ships in one pass:
+
+- **Applies surgically** — unambiguous anchors, reviewer-applyable patch
+- **Matches live code** — every claim verified via codebase grep + cross-boundary type alignment
+- **Internally consistent** — sibling DIFFs agree on shared rules (resolution strategies, ID types, naming conventions)
+- **Fully specified** — every external call, new field, state transition, and listener declares failure / retry / concurrency / lifecycle semantics
+- **Governance-clean** — passes OS invariants, consumer contracts, and project conventions
+- **Format-stable** — one canonical structure regardless of what predecessor amendments look like
+
+The skill refuses to draft anything until all gates pass. Tech review finds nothing left to ask.
 
 ## Trigger
 

@@ -1,14 +1,27 @@
 # Diff Amendment Generator — Claude Code Skill
 
-A Claude Code skill that turns a **base spec + a change request + a codebase** into a **standalone diff-amendment file** that a backend team can apply surgically. Never modifies the base spec. Output is minimal, format-consistent, and pre-validated against code reality, governance invariants, and cross-DIFF consistency so it ships in one tech-review pass.
+A Claude Code skill that produces **deployment-ready diff-amendment files** for a base spec (YAML / PRD / governance doc / API contract). Takes a base spec + a change request + a codebase + prior amendments, and outputs a single standalone amendment that a backend team can apply and ship without follow-up questions. Never modifies the base spec.
+
+The output is applyable in one pass: every claim is verified against live code, every DIFF is internally and cross-DIFF consistent, every external call and mutable field declares its failure / retry / concurrency / lifecycle semantics, and every governance surface (OS + consumer contracts + project conventions) is explicitly checked.
 
 ---
 
-## What problem does this solve?
+## What this skill does
 
-*"Here's AMENDMENT-04. Please implement."* → *"We have 22 questions."*
+Produces a **deployment-ready diff-amendment** for a base spec. "Deployment-ready" means:
 
-Governance YAML / PRD / service-spec amendments often fail tech review not because of bugs, but because of **unanswered questions**:
+- **Applies surgically.** Reviewer-applyable patch with unambiguous anchors; no guesswork on where each change lands.
+- **Matches live code.** Every claim verified against the codebase (entities, columns, migrations, DTOs, handlers) including cross-boundary type alignment.
+- **Internally consistent.** Sibling DIFFs agree on shared rules (resolution strategies, ID types, naming conventions, transport classifications).
+- **Fully specified.** Every external call, new field, state transition, and listener declares its failure / retry / concurrency / lifecycle semantics — implementers never have to guess.
+- **Governance-clean.** Passes OS invariants (PII, state machine, event registry, guards, schema, naming), consumer contracts (TAS), and project conventions (error envelopes, endpoint patterns, register/unregister symmetry).
+- **Format-stable.** One canonical structure — header, DIFFs with `governance_posture:` blocks, END summary — regardless of what predecessor amendments look like.
+
+The skill refuses to draft anything until all gates pass, so the file the tech team receives ships in one pass instead of coming back with unanswered questions.
+
+## The failure mode this avoids
+
+Amendments that look complete but aren't deployment-ready generate review cycles like:
 
 - "What happens if this external call times out?"
 - "These two DIFFs describe the same lookup but with different resolution rules — which one wins?"
@@ -16,7 +29,7 @@ Governance YAML / PRD / service-spec amendments often fail tech review not becau
 - "The spec says `MUST NOT render the OTP` but the flow requires rendering it. How is the policy enforced?"
 - "You registered this event in the HTTP producer list but the transport is Rabbit. Bug?"
 
-Each of these kicks the amendment back to the author for a round-trip, costing days. This skill front-loads all of them at author time.
+Each kicks the amendment back to the author — days of latency per round-trip. This skill answers every question of this class at author time.
 
 ---
 
