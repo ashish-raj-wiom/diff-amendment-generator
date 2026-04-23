@@ -74,21 +74,25 @@ Every gate produces numbered `[CONCERN-N]` blocks with 2–3 options and a recom
 1. Base spec file
 2. Change request (list / richer version / plain-English)
 3. Amendment number (e.g. `AMENDMENT-04`)
-4. Codebase root path — spec is aspirational; code is authoritative
+4. **Codebase source** — three-part input:
+   - `local_path:` root of your local clone
+   - `expected_remote_url:` the canonical GitHub/GitLab/etc. URL the clone should point at
+   - `branch:` branch the amendment targets (e.g. `qa`, `main`)
+
+   Skill verifies remote URL + branch + freshness via `git fetch` + `git status -sb`. A stale or wrong-remote clone BLOCKS the skill — you must pull, clean, or explicitly acknowledge the divergence. Never silently trusts the local folder.
 5. Prior amendments (ordered list) or explicit "none"
 6. Target deploy path
 
 **Strongly recommended:**
 
-7. Upstream git ref (read-only `git log` / `git diff`)
-8. OS / base-spec governance files — drives Phase 5a
-9. TAS / consumer-contract governance files — drives Phase 5b
-10. Project conventions doc — drives Phase 5c
+7. OS / base-spec governance files — drives Phase 5a
+8. TAS / consumer-contract governance files — drives Phase 5b
+9. Project conventions doc — drives Phase 5c
 
 **Optional:**
 
-11. Slice scope ("X flow only")
-12. Codebase navigation hints (migration path, DTO path, service path)
+10. Slice scope ("X flow only")
+11. Codebase navigation hints (migration path, DTO path, service path)
 
 ---
 

@@ -38,31 +38,53 @@ Do **not** use for rewriting specs in place, generating full spec versions, or p
 1. **Base spec file** — path to the OLD being amended
 2. **Change request** — list / newer-version / plain-English description of what to change
 3. **Amendment number** — e.g. `AMENDMENT-04`, `v2.1-patch-1`
-4. **Codebase pointer** — root path of the repo that integrates the diff. Spec is aspirational; code is authoritative.
+4. **Codebase source** — both of:
+   - `local_path:` root of the local git clone of the repo that integrates the diff
+   - `expected_remote_url:` the canonical remote (e.g. `https://github.com/org/repo`) the local path should point at
+   - `branch:` the branch the amendment targets (e.g. `qa`, `main`, `release-01`)
+   Skill will verify `local_path` is a git clone of `expected_remote_url` on `branch`, run `git fetch` (read-only), and check `git status -sb`. If local is behind / ahead / dirty / pointing at the wrong remote, drafting blocks until user either pulls, cleans, or explicitly acknowledges the divergence.
 5. **Prior amendments** — paths to all amendments already applied to the base (in apply order), or explicit "none." Drives anchor resolution, prereqs declaration, conflict detection.
 6. **Target deploy path** — where the amendment will land
 
 **Strongly recommended:**
 
-7. **Upstream git ref** — so the skill can inspect `git log` / `git diff` (read-only)
-8. **OS governance files** — base spec's own invariants. Drives Phase 5a.
-9. **TAS governance files** — downstream consumer-contract invariants. Drives Phase 5b.
-10. **Project conventions doc** — error envelopes, endpoint naming patterns, standard response shapes, registration patterns. Drives Phase 5c.
+7. **OS governance files** — base spec's own invariants. Drives Phase 5a.
+8. **TAS governance files** — downstream consumer-contract invariants. Drives Phase 5b.
+9. **Project conventions doc** — error envelopes, endpoint naming patterns, standard response shapes, registration patterns. Drives Phase 5c.
 
 **Optional:**
 
-11. **Slice scope** — "X flow only" for scope fencing
-12. **Codebase navigation hints** — migration path, DTO path, service path
+10. **Slice scope** — "X flow only" for scope fencing
+11. **Codebase navigation hints** — migration path, DTO path, service path
 
-Use `AskUserQuestion` once at intake for anything missing from #1–#6. Don't invent values.
+Use `AskUserQuestion` once at intake for anything missing from #1–#6. Don't invent values. For #4 specifically, never assume a pre-existing local folder is the right clone — always verify remote URL + branch + freshness.
 
 ## 7-phase workflow
 
-**Phase 1 — Orientation** (read-only)
+**Phase 1 — Orientation** (read-only; includes codebase freshness gate)
+
+**1a — Codebase freshness check (mandatory gate):**
+- Verify `local_path` (input #4) is a git repository: `git -C <local_path> rev-parse --is-inside-work-tree`.
+- Verify the configured remote matches `expected_remote_url`: `git -C <local_path> config --get remote.origin.url`. If mismatched, BLOCK with clear error — this is the wrong clone.
+- Verify current branch matches `branch`: `git -C <local_path> rev-parse --abbrev-ref HEAD`. If mismatched, BLOCK or prompt user to switch.
+- Run `git fetch origin <branch>` (read-only; updates remote-tracking refs, never mutates working tree).
+- Run `git status -sb` to check local state vs fetched remote.
+- Report one of:
+  - `UP-TO-DATE` — local matches `origin/<branch>`, clean working tree → proceed.
+  - `BEHIND` — local is behind `origin/<branch>` by N commits → BLOCK. Ask user to pull or explicitly confirm they want to anchor against the stale version.
+  - `AHEAD` — local has commits not on origin → BLOCK. Ask user whether those commits should be part of the amendment's "effective base" or ignored.
+  - `DIRTY` — uncommitted changes in working tree → BLOCK. Ask user to stash or confirm which tree state to anchor against.
+  - `DIVERGED` — both ahead and behind → BLOCK. Investigate before proceeding.
+- Do not run `git pull`, `git merge`, `git checkout`, or any working-tree mutation. Only `git fetch` (remote-tracking refs) and read-only inspection commands.
+
+**1b — Spec parsing:**
 - Parse base spec. Inventory top-level sections + anchor keys.
 - Parse every prior amendment in apply order. Build effective-anchor map (see `reference/prior_amendments_handling.md`).
-- If upstream git ref provided: `git log --oneline` and `git diff` to flag uncommitted deltas. Never `git pull`, never mutate.
-- Report: section inventory + prior-amendment footprint + effective anchors.
+
+**1c — Orientation report:**
+- Codebase freshness state (from 1a) — explicit PASS/BLOCK.
+- Section inventory + prior-amendment footprint + effective anchors.
+- `git log -5 --oneline` of `origin/<branch>` so the user sees the most recent commits the amendment is anchoring against.
 
 **Phase 2 — Intake & classification**
 - Normalise change request into discrete items.
@@ -116,7 +138,8 @@ Use `AskUserQuestion` once at intake for anything missing from #1–#6. Don't in
 
 ## Default behaviours (auto-mode safe)
 
-- **Git:** read-only. Use `git log`, `git diff`, `git status`. Never `git pull`, never commit, never push.
+- **Git:** read-only on the working tree. Allowed: `git log`, `git diff`, `git status`, `git fetch` (updates remote-tracking refs only, never mutates the working tree), `git rev-parse`, `git config --get remote.*`. Forbidden: `git pull`, `git merge`, `git checkout`, `git reset`, `git clone` (unless explicitly confirmed by user), `git commit`, `git push`.
+- **Codebase freshness:** mandatory gate in Phase 1a. Never trust a pre-existing local folder without verifying remote URL + branch + freshness via `git fetch` + `git status -sb`.
 - **Superseded draft rename:** propose to user, do not auto-rename.
 - **File creation:** only the amendment file, in the folder the user specified or adjacent to the base spec. Do not create new folders without confirmation.
 - **Base spec:** never modify. If the user asks to edit the base directly, push back — that's not this skill's job.
@@ -146,6 +169,8 @@ Use `AskUserQuestion` once at intake for anything missing from #1–#6. Don't in
 - Never modify the base spec or prior amendments.
 - Never add a DIFF without a specific change-request item backing it.
 - Never introduce operations outside the closed sub_op vocabulary unless strictly symmetric to an existing one (e.g. `INSERT_BLOCK` is symmetric to `REMOVE_BLOCK`) — and declare the extension in the header.
+- **Never trust a pre-existing local codebase folder** without verifying its remote URL, branch, and freshness state via the Phase 1a gate. A stale local clone can pass `grep`-level reality checks while being wrong about what actually ships.
+- Never proceed past Phase 1a with BEHIND / AHEAD / DIRTY / DIVERGED codebase state unless the user explicitly acknowledges the divergence.
 - Never proceed past Phase 3 with unacknowledged DRIFT / GAP / PHANTOM / type-mismatch items.
 - Never proceed past Phase 4b with unanswered scenario-coverage questions.
 - Never proceed past Phase 4c with unresolved cross-DIFF contradictions.
