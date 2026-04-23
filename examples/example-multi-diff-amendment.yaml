@@ -1,0 +1,208 @@
+# ==============================================================================
+# EXAMPLE — multi-DIFF amendment (showcasing MULTI + INSERT_BLOCK + concerns)
+# ==============================================================================
+# Scenario: a fictitious "order-service-prd.yaml" already has three prior
+# amendments applied. A change request asks for:
+#   1. Add two new upstream dependencies (payment-gateway, inventory-service).
+#   2. Record a new column on the "orders" table to track whether the
+#      order was placed via an in-app deep-link.
+#   3. Emit a new OS-native event ORDER_DEEPLINKED when such orders are placed.
+#   4. Also publish a legacy-bridge wire_key LEGACY_DEEPLINK_ORDER to an
+#      existing legacy-bus exchange in parallel, for the legacy
+#      analytics pipeline.
+#
+# Two concerns arose during Phase 5 that were resolved before drafting:
+#   [CONCERN-1] RESOLVED via (b) — use encrypted deeplink_token column
+#                                  instead of raw deeplink_url.
+#   [CONCERN-2] RESOLVED via (a) — declare LEGACY_DEEPLINK_ORDER as
+#                                  wire_key (not event_id) to keep the
+#                                  consumer-contract unambiguous.
+# ==============================================================================
+
+# ==============================================================================
+# AMENDMENT-04 — order-service-prd.yaml
+# ==============================================================================
+# Purpose:      Support in-app deep-link order entries end-to-end — new
+#               dependencies, new tracking column, new canonical event,
+#               and a parallel legacy-bridge emit.
+# Scope:        Section 2 (dependencies) + Section 8 (data_model.orders) +
+#               Section 12 (events.produces).
+# Out of scope (explicit):
+#   - No state-machine changes — deep-link orders flow through the same
+#     states as in-app orders.
+#   - No new guard — existing GUARD-ORD-03 covers deep-link authenticity
+#     (pre-validated by payment-gateway).
+#   - No change to OrderCreated event — ORDER_DEEPLINKED is additive, not
+#     a replacement.
+# Target:       specs/order-service-prd.yaml
+# Prereqs:      AMENDMENT-01, AMENDMENT-02, AMENDMENT-03 already applied
+# Coordination: payment-gateway + inventory-service must expose the endpoints
+#               referenced in DIFF A before DIFF C's ORDER_DEEPLINKED ships.
+#               Deploy order: inventory-service → payment-gateway → order-service.
+#
+# CONCERN STATUS:
+#   [CONCERN-1] RESOLVED via option (b) — store encrypted deeplink_token,
+#                                         not raw deeplink_url (PII posture).
+#   [CONCERN-2] RESOLVED via option (a) — use wire_key for legacy bridge.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# DIFF A — Section 2 dependencies
+# Add two new upstream data-providers (payment-gateway, inventory-service)
+# required for deep-link order validation.
+# ------------------------------------------------------------------------------
+diff_A_dependencies_add_payment_and_inventory:
+  anchor_section: "dependencies"
+  operation: MULTI
+  changes:
+    - sub_op: INSERT_BLOCK
+      anchor_section: "dependencies"
+      insert_after_service: "auth-service"
+      new_entry:
+        - service: payment-gateway
+          type: data-provider
+          direction: upstream
+          criticality: critical
+          endpoint: "GET /v2/deeplinks/{token}/validate"
+          timing: "Invoked synchronously when an order arrives with a deeplink_token. Response held in request scope only."
+          note: "Credential in env var PAYMENT_GATEWAY_API_KEY. Failure-tolerant: non-200 returns Optional.empty() and order falls back to standard validation."
+    - sub_op: INSERT_BLOCK
+      anchor_section: "dependencies"
+      insert_after_service: "payment-gateway"
+      new_entry:
+        - service: inventory-service
+          type: data-provider
+          direction: upstream
+          criticality: high
+          endpoint: "GET /v1/items/{sku}/availability"
+          timing: "Invoked synchronously during deep-link order validation to confirm inventory."
+          note: "Request-scope only. 5s timeout. On timeout, order falls back to standard inventory path."
+  governance_posture:
+    state_machine: "NO CHANGE"
+    schema_change: "NONE"
+    new_events:    0
+    new_guards:    0
+    os_check:      "PASS"
+    tas_check:     "PASS"
+
+# ------------------------------------------------------------------------------
+# DIFF B — Section 8 data_model.orders
+# Add a new column to track deep-link origin. Resolved [CONCERN-1] via (b) —
+# use encrypted token, not raw URL, to keep PII out of the column.
+# ------------------------------------------------------------------------------
+diff_B_data_model_add_deeplink_token:
+  anchor_section: "data_model.orders"
+  operation: MULTI
+  changes:
+    - sub_op: INSERT_BLOCK
+      anchor_entry: "data_model.orders.columns"
+      insert_after_column: "created_at"
+      new_entry:
+        - name: deeplink_token
+          type: "VARCHAR(255)"
+          nullable: true
+          default: "NULL"
+          note: "Opaque encrypted token issued by payment-gateway for deep-link-originated orders. NULL when order was placed via standard flow. Never contains raw URL / PII. See [CONCERN-1] RESOLVED via (b)."
+          migration: |
+            V012__add_deeplink_token_to_orders.sql
+            -- ADD COLUMN deeplink_token VARCHAR(255) NULL DEFAULT NULL
+            -- Additive, safe rollback.
+  governance_posture:
+    state_machine: "NO CHANGE"
+    schema_change: "additive: V012 adds deeplink_token VARCHAR(255) NULL DEFAULT NULL"
+    new_events:    0
+    new_guards:    0
+    os_check:      "CONCERN-1 (RESOLVED via b)"
+    tas_check:     "PASS"
+
+# ------------------------------------------------------------------------------
+# DIFF C — Section 12 events.produces — new OS-native event ORDER_DEEPLINKED
+# First-class event on the canonical bus. Goes into registry_event_mapping
+# in the same release (not included as a DIFF here — the registry update
+# is handled by a sibling amendment on the event-registry PRD).
+# ------------------------------------------------------------------------------
+diff_C_events_produces_order_deeplinked:
+  anchor_section: "events.produces"
+  anchor_after_event_id: "ORDER_CREATED"
+  operation: INSERT
+  new_entry:
+    - event_id: "ORDER_DEEPLINKED"
+      event_type_name: "OrderDeeplinked"
+      schema_version: "1.0"
+      trigger: "After a deep-link-originated order successfully validates via payment-gateway."
+      consumers:
+        - "analytics-service"
+        - "audit-service"
+      partition_key: "order-{order_id}"
+      payload:
+        - field: order_id
+          type: uuid
+        - field: deeplink_token
+          type: "string (encrypted; opaque to consumers)"
+        - field: occurred_at
+          type: timestamptz
+      note: "Fires in addition to ORDER_CREATED, not instead of. Consumers subscribe to whichever signal fits their analytics model."
+  governance_posture:
+    state_machine: "NO CHANGE"
+    schema_change: "NONE (column added by DIFF B)"
+    new_events:    1
+    new_guards:    0
+    os_check:      "PASS"
+    tas_check:     "PASS"
+
+# ------------------------------------------------------------------------------
+# DIFF D — Section 12 events.produces — legacy-bridge LEGACY_DEEPLINK_ORDER
+# Parallel emit to legacy analytics bus. [CONCERN-2] RESOLVED via (a): use
+# wire_key (not event_id) to keep consumer-contract unambiguous. NOT in
+# registry_event_mapping — absence is the governance statement.
+# Also appends a bidirectional note on canonical ORDER_DEEPLINKED pointing
+# at this bridge (per minimality rule 11).
+# ------------------------------------------------------------------------------
+diff_D_events_produces_legacy_bridge:
+  anchor_section: "events.produces"
+  operation: MULTI
+  changes:
+    - sub_op: INSERT_BLOCK
+      anchor_section: "events.produces"
+      insert_after_event_id: "ORDER_DEEPLINKED"
+      new_entry:
+        - wire_key: "LEGACY_DEEPLINK_ORDER"
+          governance: "legacy-bridge — NOT in OS event registry; NOT in registry_event_mapping.producers; NOT an event_id. Transport for legacy analytics pipeline only."
+          channel: "LegacyAnalyticsRmqDestination"
+          envelope: "LegacyAnalyticsMessage (legacy format, NOT the OS event envelope)"
+          exchange: "legacy.analytics.orders"
+          routing_key: "order.deeplinked"
+          trigger: "Same trigger as ORDER_DEEPLINKED. Published IN PARALLEL, not instead of."
+          payload:
+            - field: order_id
+              type: long
+              json_name: "order_id (snake-cased per legacy convention)"
+            - field: ts
+              type: epoch_millis
+          consumers: ["legacy-analytics-pipeline"]
+          note: "Bridge only. OS-native consumers MUST subscribe to ORDER_DEEPLINKED. Sunsets when legacy analytics migrates to OS bus."
+    - sub_op: UPDATE_FIELD_TEXT
+      anchor_entry: "events.produces[ORDER_DEEPLINKED].note"
+      append: "Parallel legacy-bridge emit LEGACY_DEEPLINK_ORDER fires on the same trigger — see wire_key entry below. OS-native consumers MUST subscribe to this event, NOT the legacy wire_key."
+  governance_posture:
+    state_machine: "NO CHANGE"
+    schema_change: "NONE"
+    new_events:    0   # wire_key is not a first-class event
+    new_wire_keys: 1
+    new_guards:    0
+    os_check:      "CONCERN-2 (RESOLVED via a)"
+    tas_check:     "PASS"
+
+# ==============================================================================
+# END OF AMENDMENT-04
+# ==============================================================================
+# 4 DIFFs. All concerns resolved.
+#   A — add payment-gateway + inventory-service dependencies
+#   B — add deeplink_token column (V012)                         [C-1 RESOLVED via b]
+#   C — emit new OS-native event ORDER_DEEPLINKED
+#   D — parallel legacy-bridge LEGACY_DEEPLINK_ORDER + canonical
+#       note pointer                                             [C-2 RESOLVED via a]
+# Schema impact: additive-only (V012). No renames, no drops.
+# Event impact: +1 OS-native event, +1 legacy-bridge wire_key.
+# Anchor line numbers intentionally omitted — all DIFFs use semantic anchors.
+# ==============================================================================

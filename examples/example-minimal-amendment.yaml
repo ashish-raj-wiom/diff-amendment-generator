@@ -1,0 +1,83 @@
+# ==============================================================================
+# EXAMPLE — minimal amendment (2 DIFFs, annotated)
+# ==============================================================================
+# Scenario: a fictitious "notification-service-prd.yaml" already has a
+# dependency on "email-provider" and an events.produces section. A change
+# request asks for:
+#   1. Add a new dependency on "sms-gateway" as a downstream provider.
+#   2. Update the note on events.produces[NOTIFICATION_SENT] to mention
+#      SMS delivery as a new channel.
+#
+# This example shows the minimum structure: header, two DIFFs (one INSERT
+# top-level, one MULTI with one UPDATE_FIELD_TEXT sub_op), and END block.
+# ==============================================================================
+
+# ==============================================================================
+# AMENDMENT-01 — notification-service-prd.yaml
+# ==============================================================================
+# Purpose:      Add sms-gateway dependency and document SMS as a new
+#               NOTIFICATION_SENT delivery channel.
+# Scope:        Section 2 (dependencies) + Section 12 (events.produces).
+# Out of scope (explicit):
+#   - No change to NOTIFICATION_SENT event_id, payload, or consumers list.
+#   - No new event for SMS delivery status — tracking lives in sms-gateway.
+# Target:       specs/notification-service-prd.yaml
+# Prereqs:      none
+# Coordination: sms-gateway service must be reachable in all envs before
+#               the first NOTIFICATION_SENT fires an SMS-channel payload.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# DIFF A — Section 2 dependencies
+# Add sms-gateway as a downstream notification-delivery provider.
+# ------------------------------------------------------------------------------
+diff_A_dependencies_add_sms_gateway:
+  anchor_section: "dependencies"
+  anchor_after_service: "email-provider"
+  operation: INSERT
+  new_entry:
+    - service: sms-gateway
+      type: notification-provider
+      direction: downstream
+      criticality: medium
+      endpoint: "POST /v1/send"
+      timing: "Invoked asynchronously when a notification with channel=SMS is produced. Fire-and-log semantics; SMS delivery failure does not roll back the originating transaction."
+      note: "Credential stored as env var SMS_GATEWAY_API_KEY. Provider rate-limits; notification-service retries once with exponential backoff on 429."
+  governance_posture:
+    state_machine: "NO CHANGE"
+    schema_change: "NONE"
+    new_events:    0
+    new_guards:    0
+    os_check:      "PASS"
+    tas_check:     "PASS"
+
+# ------------------------------------------------------------------------------
+# DIFF B — Section 12 events.produces[NOTIFICATION_SENT].note
+# Extend the existing note to mention SMS as a delivery channel.
+# ------------------------------------------------------------------------------
+diff_B_notification_sent_note_mentions_sms:
+  anchor_section: "events.produces"
+  anchor_event_id: "NOTIFICATION_SENT"
+  operation: MULTI
+  changes:
+    - sub_op: UPDATE_FIELD_TEXT
+      anchor_entry: "events.produces[NOTIFICATION_SENT].note"
+      append: "SMS channel added by AMENDMENT-01. Payload channel field now accepts values in {EMAIL, PUSH, SMS}."
+  governance_posture:
+    state_machine: "NO CHANGE"
+    schema_change: "NONE"
+    new_events:    0
+    new_guards:    0
+    os_check:      "PASS"
+    tas_check:     "PASS"
+
+# ==============================================================================
+# END OF AMENDMENT-01
+# ==============================================================================
+# 2 DIFFs.
+#   A — add sms-gateway dependency (Section 2)
+#   B — append SMS channel mention to NOTIFICATION_SENT note (Section 12)
+# No concerns raised. No schema change. No new events.
+# Anchor line numbers intentionally omitted — semantic anchors are sufficient
+# for a base spec with no prior amendments.
+# ==============================================================================
